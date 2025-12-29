@@ -43,7 +43,13 @@ const server = http.createServer((req, res) => {
             res.writeHead(200, { 'Content-Type': 'application/javascript' });
             res.end(data);
         });
-
+　　// 2.5 CSSファイル
+    } else if (req.url === '/style.css') {
+        fs.readFile(path.join(__dirname, 'style.css'), (err, data) => {
+            if (err) { res.writeHead(404); res.end("style.css Not Found"); return; }
+            res.writeHead(200, { 'Content-Type': 'text/css' });
+            res.end(data);
+        });
     // 3. ニュース取得API
     } else if (req.url === '/api/get-news') {
         const NEWS_RSS_URL = "https://news.google.com/rss/search?q=AI%20%E4%B8%8D%E5%8B%95%E7%94%A3&hl=ja&gl=JP&ceid=JP:ja";
@@ -95,4 +101,5 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+
 });
