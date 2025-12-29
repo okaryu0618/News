@@ -1,92 +1,71 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const http = require('http');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 const { google } = require('googleapis');
 
-// --- 設定情報 ---
-const API_KEY = "AIzaSyBmbSkjc0MMOKho-laxg3LpKRvysZRKdrs";
-const PORT = process.env.PORT || 3005; // Renderが指定するポートを使うconst SPREADSHEET_ID = "1Vaygqh0gD54ZLP2OJd5gpapETvLzQFh-gHf8fNsfVIE";
-const NEWS_RSS_URL = "https://news.google.com/rss/search?q=" + encodeURIComponent("人材業界 AI") + "&hl=ja&gl=JP&ceid=JP:ja";
+const PORT = process.env.PORT || 3005;
+const API_KEY = process.env.API_KEY;
+const SPREADSHEET_ID = '1Vaygqh0gD54ZLP2OJd5gpapETvLzQFh-gHf8fNsfVIE';
 
-// credentials.json を直接読み込むのではなく、環境変数から読み込む
+// 環境変数からGoogle認証情報を取得
 const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT), 
+    credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
 const server = http.createServer((req, res) => {
-    // CORS設定（すべてのリクエストに適用）
+    // CORS設定
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
-        res.writeHead(200);
+        res.writeHead(204);
         res.end();
         return;
     }
 
-    // デバッグログ：ブラウザから届いたURLをそのまま表示
-    console.log(`[受信リクエスト]: ${req.url}`);
+    // --- ルーティング ---
 
-    // --- 1. ニュース取得 ---
-    // includes を使うことで、多少のパスのズレがあっても反応するようにします
-    if (req.url.includes('/api/get-news')) {
-        console.log("-> ニュース取得処理を開始します");
-        https.get(NEWS_RSS_URL, (newsRes) => {
+    // 1. トップ画面 (index.html)
+    if (req.url === '/' || req.url === '/index.html') {
+        fs.readFile(path.join(__dirname, 'index.html'), (err, data) => {
+            if (err) { res.writeHead(404); res.end("index.html Not Found"); return; }
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(data);
+        });
+
+    // 2. JavaScriptファイル
+    } else if (req.url === '/script.js') {
+        fs.readFile(path.join(__dirname, 'script.js'), (err, data) => {
+            if (err) { res.writeHead(404); res.end("script.js Not Found"); return; }
+            res.writeHead(200, { 'Content-Type': 'application/javascript' });
+            res.end(data);
+        });
+
+    // 3. ニュース取得API
+    } else if (req.url === '/api/get-news') {
+        const NEWS_RSS_URL = "https://news.google.com/rss/search?q=AI%20%E4%B8%8D%E5%8B%95%E7%94%A3&hl=ja&gl=JP&ceid=JP:ja";
+        https.get(NEWS_RSS_URL, (rssRes) => {
             let data = '';
-            newsRes.on('data', chunk => { data += chunk; });
-            newsRes.on('end', () => {
+            rssRes.on('data', chunk => { data += chunk; });
+            rssRes.on('end', () => {
                 const items = [];
-                const entries = data.match(/<item>([\s\S]*?)<\/item>/g) || [];
-                entries.forEach(entry => {
-                    const title = entry.match(/<title>(.*?)<\/title>/)?.[1] || "";
-                    const link = entry.match(/<link>(.*?)<\/link>/)?.[1] || "#";
-                    const pubDate = entry.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || "";
-                    const keywords = ["AI", "人工知能", "採用", "人材", "DX"];
-                    if (keywords.some(k => title.includes(k))) {
-                        items.push({ title: title.replace(/ - .*$/, ""), link, date: new Date(pubDate) });
-                    }
-                });
-                items.sort((a, b) => b.date - a.date);
-                const result = JSON.stringify({ news: items.slice(0, 5) });
+                const itemMatches = data.matchAll(/<item>([\s\S]*?)<\/item>/g);
+                for (const match of itemMatches) {
+                    const content = match[1];
+                    const title = content.match(/<title>(.*?)<\/title>/)?.[1] || "No Title";
+                    const link = content.match(/<link>(.*?)<\/link>/)?.[1] || "";
+                    items.push({ title, link });
+                }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(result);
-                console.log(`<- ニュース5件を返信しました`);
+                res.end(JSON.stringify({ news: items }));
             });
-        }).on('error', (e) => {
-            console.error("RSS取得エラー:", e);
-            res.writeHead(500); res.end();
         });
 
-    // --- 2. Gemini AI プロキシ ---
-    } else if (req.url.includes('/api/gemini')) {
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', () => {
-            console.log("-> Gemini AIへリクエスト送信中...");
-            const options = {
-                hostname: 'generativelanguage.googleapis.com',
-                // 先ほど確認した「gemini-2.0-flash」を使用
-                path: `/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            };
-            const gReq = https.request(options, (gRes) => {
-                let gData = '';
-                gRes.on('data', d => { gData += d; });
-                gRes.on('end', () => {
-                    console.log(`<- AI応答ステータス: ${gRes.statusCode}`);
-                    res.writeHead(gRes.statusCode, { 'Content-Type': 'application/json' });
-                    res.end(gData);
-                });
-            });
-            gReq.write(body);
-            gReq.end();
-        });
-
-    // --- 3. スプレッドシート保存 ---
-    } else if (req.url.includes('/api/save-sheet')) {
+    // 4. スプレッドシート保存API
+    } else if (req.url === '/api/save-sheet') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
         req.on('end', async () => {
@@ -95,26 +74,25 @@ const server = http.createServer((req, res) => {
                 const sheets = google.sheets({ version: 'v4', auth });
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: SPREADSHEET_ID,
-                    range: "シート1!A:D",
+                    range: 'シート1!A:D',
                     valueInputOption: 'USER_ENTERED',
                     resource: { values: [[new Date().toLocaleString(), title, summary, link]] },
                 });
-                console.log(`<- シートに保存成功: ${title.slice(0, 10)}...`);
-                res.writeHead(200); res.end(JSON.stringify({ status: "ok" }));
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: "ok" }));
             } catch (err) {
-                console.error("保存エラー:", err);
-                res.writeHead(500); res.end();
+                console.error(err);
+                res.writeHead(500);
+                res.end(JSON.stringify({ error: err.message }));
             }
         });
 
     } else {
-        // どのURLにも一致しない場合
-        console.log(`[Warning] 未定義のパスへのアクセス: ${req.url}`);
         res.writeHead(404);
-        res.end();
+        res.end("Not Found");
     }
 });
 
 server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
