@@ -45,8 +45,8 @@ const server = http.createServer((req, res) => {
         });
 　　// 2.5 CSSファイル
     } else if (req.url === '/style.css') {
-        fs.readFile(path.join(__dirname, 'style.css'), (err, data) => {
-            if (err) { res.writeHead(404); res.end("style.css Not Found"); return; }
+        fs.readFile(path.join(__dirname, 'Style.css'), (err, data) => {
+            if (err) { res.writeHead(404); res.end("Style.css Not Found"); return; }
             res.writeHead(200, { 'Content-Type': 'text/css' });
             res.end(data);
         });
@@ -103,3 +103,4 @@ server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 
 });
+
